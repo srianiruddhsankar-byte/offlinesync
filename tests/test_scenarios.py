@@ -45,7 +45,11 @@ def test_same_field_conflict_writes_nothing(client, laptop, phone, rid):
     assert body["outcome"] == "CONFLICT" and body["reason"] == "FIELD_CONFLICT"
     c = body["conflicts"][0]
     assert (c["field"], c["base_value"], c["server_value"], c["client_value"]) == (
-        "status", "TODO", "DONE", "IN_PROGRESS")
+        "status",
+        "TODO",
+        "DONE",
+        "IN_PROGRESS",
+    )
     assert c["server_changed_by"] == "laptop"
     rec = client.get(f"/records/{rid}").json()
     assert rec["version"] == 2 and rec["data"]["status"] == "DONE"
@@ -170,8 +174,7 @@ def test_delete_vs_edit_conflicts_both_ways(client, laptop, phone, rid):
 def test_default_mode_is_all_or_nothing(client, laptop, phone, rid):
     make_record(laptop, rid)
     laptop.send(rid, "update", 1, {"status": {"set": "DONE"}})
-    r, _ = phone.send(rid, "update", 1,
-                      {"title": {"set": "clean"}, "status": {"set": "IN_PROGRESS"}})
+    r, _ = phone.send(rid, "update", 1, {"title": {"set": "clean"}, "status": {"set": "IN_PROGRESS"}})
     assert r.status_code == 409
     assert client.get(f"/records/{rid}").json()["data"]["title"] == "First"
     assert phone.seq == 0  # conflict did not advance the sequence
@@ -180,8 +183,9 @@ def test_default_mode_is_all_or_nothing(client, laptop, phone, rid):
 def test_partial_mode_applies_clean_fields(client, laptop, phone, rid):
     make_record(laptop, rid)
     laptop.send(rid, "update", 1, {"status": {"set": "DONE"}})
-    r, _ = phone.send(rid, "update", 1,
-                      {"title": {"set": "clean"}, "status": {"set": "IN_PROGRESS"}}, partial=True)
+    r, _ = phone.send(
+        rid, "update", 1, {"title": {"set": "clean"}, "status": {"set": "IN_PROGRESS"}}, partial=True
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["outcome"] == "MERGED" and body["partial"] and body["needs_resolution"]
@@ -203,13 +207,26 @@ def test_partial_with_no_clean_field_is_plain_conflict(client, laptop, phone, ri
 
 def test_batch_endpoint_mixed_results(client, rid):
     def item(seq, op, base, changes, dev="d1"):
-        return {"request_id": str(uuid.uuid4()), "device_id": dev, "sequence": seq,
-                "record_id": rid, "op": op, "base_version": base, "changes": changes}
-    r = client.post("/sync", json={"changes": [
-        item(1, "create", 0, {"title": {"set": "b"}}),
-        item(2, "update", 1, {"title": {"set": "c"}}),
-        item(4, "update", 2, {"title": {"set": "gap"}}),
-    ]})
+        return {
+            "request_id": str(uuid.uuid4()),
+            "device_id": dev,
+            "sequence": seq,
+            "record_id": rid,
+            "op": op,
+            "base_version": base,
+            "changes": changes,
+        }
+
+    r = client.post(
+        "/sync",
+        json={
+            "changes": [
+                item(1, "create", 0, {"title": {"set": "b"}}),
+                item(2, "update", 1, {"title": {"set": "c"}}),
+                item(4, "update", 2, {"title": {"set": "gap"}}),
+            ]
+        },
+    )
     assert r.status_code == 200
     results = r.json()["results"]
     assert [x["status"] for x in results] == [201, 200, 409]
@@ -225,8 +242,16 @@ def test_concurrent_conflicting_requests_exactly_one_wins(db_env):
     rid = str(uuid.uuid4())
 
     def req(dev, seq, op, base, changes):
-        return {"request_id": str(uuid.uuid4()), "device_id": dev, "sequence": seq,
-                "record_id": rid, "op": op, "base_version": base, "partial": False, "changes": changes}
+        return {
+            "request_id": str(uuid.uuid4()),
+            "device_id": dev,
+            "sequence": seq,
+            "record_id": rid,
+            "op": op,
+            "base_version": base,
+            "partial": False,
+            "changes": changes,
+        }
 
     conn = connect()
     apply_change(conn, req("seed", 1, "create", 0, {"title": {"set": "t"}}))

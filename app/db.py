@@ -1,6 +1,8 @@
 """SQLite connection helper, schema, and the transaction wrapper."""
+
 import os
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 SCHEMA = """
@@ -67,7 +69,7 @@ def init_db() -> None:
 
 
 @contextmanager
-def transaction(conn: sqlite3.Connection):
+def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     """BEGIN IMMEDIATE takes the write lock up front, so concurrent syncs serialize."""
     conn.execute("BEGIN IMMEDIATE")
     try:

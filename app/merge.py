@@ -1,5 +1,6 @@
 """Field schema, op validation, and per-type merge strategies."""
-from typing import Any, Optional
+
+from typing import Any
 
 STATUSES = {"TODO", "IN_PROGRESS", "DONE"}
 
@@ -38,7 +39,7 @@ def _is_int(v: Any) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-def _validate_scalar(field: str, spec: dict) -> Optional[str]:
+def _validate_scalar(field: str, spec: dict) -> str | None:
     if set(spec) != {"set"}:
         return f"'{field}' takes exactly {{\"set\": value}}"
     v = spec["set"]
@@ -53,9 +54,9 @@ def _validate_scalar(field: str, spec: dict) -> Optional[str]:
     return None
 
 
-def _validate_set(field: str, spec: dict) -> Optional[str]:
+def _validate_set(field: str, spec: dict) -> str | None:
     if not spec or not set(spec) <= {"add", "remove"}:
-        return f"'{field}' takes {{\"add\": [...], \"remove\": [...]}}"
+        return f'\'{field}\' takes {{"add": [...], "remove": [...]}}'
     lists = {}
     for key in ("add", "remove"):
         items = spec.get(key, [])
@@ -69,7 +70,7 @@ def _validate_set(field: str, spec: dict) -> Optional[str]:
     return None
 
 
-def _validate_counter(field: str, spec: dict) -> Optional[str]:
+def _validate_counter(field: str, spec: dict) -> str | None:
     if set(spec) != {"increment"}:
         return f"'{field}' takes exactly {{\"increment\": int}}"
     n = spec["increment"]
@@ -81,7 +82,7 @@ def _validate_counter(field: str, spec: dict) -> Optional[str]:
 _VALIDATORS = {"scalar": _validate_scalar, "set": _validate_set, "counter": _validate_counter}
 
 
-def validate_changes(op: str, changes: dict[str, dict]) -> Optional[str]:
+def validate_changes(op: str, changes: dict[str, dict]) -> str | None:
     """Return an error message, or None if the changes are valid for this op."""
     if op == "delete":
         return "delete takes no changes" if changes else None

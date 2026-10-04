@@ -4,3 +4,5 @@ __pycache__/
 *.db-wal
 *.db-shm
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
