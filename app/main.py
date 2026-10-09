@@ -6,11 +6,12 @@ import os
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from pathlib import Path as FilePath
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .db import connect, init_db
 from .docs import (
@@ -30,6 +31,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("sync")
+DEMO_PAGE = FilePath(__file__).parent / "static" / "demo.html"
 
 
 @asynccontextmanager
@@ -111,6 +113,17 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 
 
 # ---------------------------------------------------------------- routes
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse("/demo")
+
+
+@app.get("/demo", include_in_schema=False)
+def demo_page() -> HTMLResponse:
+    """A small visual demo: two devices, a server, and conflict resolution cards."""
+    return HTMLResponse(DEMO_PAGE.read_text(encoding="utf-8"))
 
 
 @app.get("/health", tags=["System"])

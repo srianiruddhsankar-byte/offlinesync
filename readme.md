@@ -34,8 +34,10 @@ pytest                             # 49 tests
 ruff check . && mypy               # lint and type check
 python demo.py                     # a narrated walkthrough, no server needed
 python -m tests.test_chaos         # the large randomized stress run
-uvicorn app.main:app --reload      # API at http://localhost:8000, Swagger UI at /docs
+uvicorn app.main:app --reload      # API at http://localhost:8000
 ```
+
+Open **http://localhost:8000/demo** for a visual demo: two devices (Laptop and Phone) edit the same record offline, and you can watch changes merge, conflicts appear with a resolve card, and retries replay safely. The Swagger UI is at `/docs`.
 
 `/docs` has a dropdown of ready-made requests (numbered 1 to 9) for the sync endpoint. Run them in order against a fresh database to see every outcome. To start over, stop the server and delete `sync.db`.
 
@@ -644,6 +646,7 @@ app/
   merge.py       field schema, validation, scalar / set / counter strategies
   schemas.py     request models
   docs.py        Swagger examples and descriptions
+  static/demo.html   the two-device visual demo served at /demo
   db.py          SQLite schema, connection and transaction helper
 tests/
   test_scenarios.py      edge-case scenarios

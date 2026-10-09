@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Offline Sync Demo</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#16181d;--mute:#667085;--line:#e3e6eb;--blue:#2563eb;--green:#16a34a;--amber:#d97706;--red:#dc2626}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--ink:#e8eaee;--mute:#98a2b3;--line:#2a2f3a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 16px 48px}h1{margin:0;font-size:24px}h2{margin:0 0 10px;font-size:16px}
+.sub{color:var(--mute);margin:4px 0 14px}.top{display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+.hint{background:color-mix(in srgb,var(--blue) 12%,var(--card));border:1px solid color-mix(in srgb,var(--blue) 35%,var(--line));padding:10px 14px;border-radius:10px;margin:0 0 16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}.grid3{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:820px){.grid,.grid3{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.dh{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.dh h2{margin:0}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:6px 12px;border-radius:8px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--blue)}button:disabled{opacity:.45;cursor:not-allowed}
+button.p{background:var(--blue);border-color:var(--blue);color:#fff}button.p:disabled{background:var(--blue)}
+input[type=text],select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);min-width:0}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}.row label{width:56px;color:var(--mute);font-size:13px}.row input[type=text]{flex:1}
+.chip{display:inline-flex;gap:4px;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:1px 4px 1px 10px;font-size:13px}
+.chip button{border:0;background:none;padding:0 6px;color:var(--mute)}.mute{color:var(--mute);font-size:13px}
+.q{font-size:13px;background:var(--bg);border-radius:8px;padding:8px 10px;margin:8px 0}.q div{padding:1px 0}
+.sw{display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer}.off{border-left:4px solid var(--amber)}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:99px;color:#fff;margin-right:6px;vertical-align:1px}
+.b-ACCEPTED{background:var(--green)}.b-MERGED{background:var(--blue)}.b-CONFLICT{background:var(--amber)}.b-REJECTED{background:var(--red)}.b-INFO{background:var(--mute)}
+.cf{border:1px solid var(--amber);background:color-mix(in srgb,var(--amber) 10%,var(--card));border-radius:10px;padding:12px;margin-top:10px}
+.cf table{width:100%;font-size:13px;border-collapse:collapse;margin:6px 0}.cf td,.cf th{text-align:left;padding:3px 6px 3px 0}
+.cf .ch button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+ul{list-style:none;padding:0;margin:0;max-height:320px;overflow:auto}li{padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}li:last-child{border:0}
+pre{margin:0;font-size:13px;white-space:pre-wrap}.tag{font-size:11px;border:1px solid var(--line);border-radius:6px;padding:0 5px;color:var(--mute)}
+</style></head><body><div class="wrap">
+<div class="top"><div><h1>Offline Sync Demo</h1><p class="sub">Two devices edit one record while offline. Watch merges, conflicts, retries and history. <a href="/docs">API docs</a></p></div>
+<button class="p" data-a="new">New record</button></div>
+<div class="hint" id="hint"></div>
+<div class="grid"><section class="card" id="laptop"></section><section class="card" id="phone"></section></div>
+<section class="card" id="srv" style="margin-bottom:16px"></section>
+<div class="grid3"><section class="card"><h2>Activity</h2><ul id="log"></ul></section><section class="card"><h2>History</h2><ul id="hist"></ul></section></div>
+</div>
+<script>
+const $=s=>document.querySelector(s),uid=()=>crypto.randomUUID();
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const DEF={title:'',body:'',status:'TODO',tags:[],views:0,deleted:false};
+const mk=name=>({name,online:true,server:null,queue:[],seq:0,cursor:0,conflict:null,last:null,busy:false});
+const S={rid:null,server:null,hist:[],log:[],devs:{laptop:mk('laptop'),phone:mk('phone')}};
+const J={'Content-Type':'application/json'};
+function applyOp(data,ch){const d=structuredClone(data);for(const[f,s]of Object.entries(ch)){if('set'in s)d[f]=s.set;else if(f==='tags'){const rm=s.remove||[];d.tags=[...new Set([...d.tags,...(s.add||[])])].filter(t=>!rm.includes(t)).sort()}else d.views+=s.increment}return d}
+const local=d=>d.queue.reduce((a,o)=>applyOp(a,o.changes),d.server?d.server.data:DEF);
+const has=d=>d.server||d.queue.some(o=>o.op==='create');
+const fmt=ch=>Object.entries(ch).map(([f,s])=>'set'in s?`${f} → ${JSON.stringify(s.set)}`:f==='tags'?'tags '+[...(s.add||[]).map(t=>'+'+t),...(s.remove||[]).map(t=>'−'+t)].join(' '):`views ${s.increment>0?'+':''}${s.increment}`).join(', ');
+const note=(d,text,outcome,j,status)=>{S.log.unshift({dev:d.name,text,outcome:outcome||'INFO',reason:j&&j.reason,replayed:j&&j.replayed,status});S.log=S.log.slice(0,40)};
+function addOp(d,changes){if(!d.server)return;d.queue.push({request_id:uid(),op:'update',base:d.server.version,changes});render()}
+async function post(d,body){let r,j;try{r=await fetch(`/records/${S.rid}/sync`,{method:'POST',headers:J,body:JSON.stringify(body)});j=await r.json()}catch(e){note(d,'Network error: '+e.message,'REJECTED');return false}
+ d.last=body;note(d,(body.op==='create'?'create record':fmt(body.changes)||body.op),j.outcome,j,r.status);const o=d.queue[0];
+ if(j.outcome==='ACCEPTED'||j.outcome==='MERGED'){d.queue.shift();d.seq++;d.server={version:j.record.version,data:j.record.data};return true}
+ if(j.outcome==='CONFLICT'){d.server={version:j.record.version,data:j.record.data};
+  if(j.reason==='FIELD_CONFLICT')d.conflict={op:o,items:j.conflicts.map(x=>({field:x.field,base:x.base_value,server:x.server_value,mine:x.client_value,by:x.server_changed_by,choice:null}))};else d.queue.shift()}
+ return false}
+async function sync(d){if(d.busy||!d.online||d.conflict)return;d.busy=true;
+ try{while(d.queue.length&&!d.conflict){const o=d.queue[0];
+  const ok=await post(d,{request_id:o.request_id,device_id:d.name,sequence:d.seq+1,record_id:S.rid,op:o.op,base_version:o.op==='create'?0:o.base,partial:false,changes:o.changes});if(!ok)break}}
+ finally{d.busy=false}await refresh()}
+async function pull(d){if(!d.online)return;for(;;){const r=await(await fetch(`/sync/changes?since=${d.cursor}&limit=500`)).json();
+ for(const c of r.changes){if(c.record_id!==S.rid)continue;d.server=d.server||{version:0,data:structuredClone(DEF)};Object.assign(d.server.data,c.fields);d.server.version=c.version}
+ d.cursor=r.next_cursor;if(!r.has_more)break}note(d,'pulled the latest changes');render()}
+function resolve(d){const c=d.conflict;if(c.items.some(i=>!i.choice))return;const ch={...c.op.changes};
+ for(const i of c.items){delete ch[i.field];if(i.choice==='mine')ch[i.field]={set:i.mine}}
+ d.conflict=null;if(Object.keys(ch).length)d.queue[0]={request_id:uid(),op:'update',base:d.server.version,changes:ch};else d.queue.shift();render();sync(d)}
+async function resend(d){const r=await fetch(`/records/${S.rid}/sync`,{method:'POST',headers:J,body:JSON.stringify(d.last)});const j=await r.json();note(d,'sent the last request again',j.outcome,j,r.status);await refresh()}
+async function restoreTo(v){const r=await fetch(`/records/${S.rid}/restore/${v}`,{method:'POST',headers:J,body:JSON.stringify({request_id:uid(),device_id:'viewer',base_version:S.server.version})});const j=await r.json();note({name:'viewer'},`restore version ${v}`,j.outcome,j,r.status);await refresh()}
+async function refresh(){if(!S.rid)return;const r=await fetch(`/records/${S.rid}`);S.server=r.ok?await r.json():null;const h=await fetch(`/records/${S.rid}/history`);S.hist=h.ok?(await h.json()).history:[];render()}
+async function newRecord(){S.rid=uid();S.server=null;S.hist=[];S.devs={laptop:mk('laptop'),phone:mk('phone')};
+ S.devs.laptop.queue.push({request_id:uid(),op:'create',base:0,changes:{title:{set:'Shopping list'},status:{set:'TODO'}}});render();await sync(S.devs.laptop)}
+function devCard(d){const lo=local(d),cap=d.name[0].toUpperCase()+d.name.slice(1);let h=`<div class="dh"><h2>${d.name==='laptop'?'💻':'📱'} ${cap}</h2><label class="sw"><input type="checkbox" data-a="toggle" data-d="${d.name}" ${d.online?'checked':''}> ${d.online?'Online':'Offline'}</label></div>`;
+ if(!has(d))h+=`<p class="mute">${S.rid?'No copy yet. Press Pull to download the record.':'Create a record first.'}</p>`;
+ else h+=`<div class="row"><label>Title</label><input type="text" id="title-${d.name}" value="${esc(lo.title)}" data-enter><button data-a="savetitle" data-d="${d.name}">Save</button></div>
+ <div class="row"><label>Status</label><select data-a="status" data-d="${d.name}">${['TODO','IN_PROGRESS','DONE'].map(s=>`<option ${lo.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+ <div class="row"><label>Tags</label>${lo.tags.map(t=>`<span class="chip">${esc(t)}<button data-a="rmtag" data-d="${d.name}" data-v="${esc(t)}">✕</button></span>`).join('')}<input type="text" id="tag-${d.name}" placeholder="add tag" size="9" data-enter><button data-a="addtag" data-d="${d.name}">Add</button></div>
+ <div class="row"><label>Views</label><b>${lo.views}</b><button data-a="inc" data-d="${d.name}">+1</button></div>`;
+ h+=`<div class="mute">Based on server version: <b>${d.server?'v'+d.server.version:'none'}</b></div>`;
+ if(d.queue.length)h+=`<div class="q"><b>Waiting to sync (${d.queue.length})</b>${d.queue.map(o=>`<div>• ${o.op==='create'?'create record':esc(fmt(o.changes))}</div>`).join('')}</div>`;
+ h+=`<div class="row"><button class="p" data-a="sync" data-d="${d.name}" ${!d.online||!d.queue.length||d.conflict?'disabled':''}>Sync</button><button data-a="pull" data-d="${d.name}" ${!d.online||!S.rid?'disabled':''}>Pull</button><button data-a="resend" data-d="${d.name}" ${d.last?'':'disabled'}>Resend last request</button></div>`;
+ if(!d.online)h+='<div class="mute off" style="padding-left:8px">Offline: edits are saved on this device and wait in the queue.</div>';
+ if(d.conflict)h+=`<div class="cf"><b>Conflict: the server has newer changes</b><div class="mute">Choose which value to keep for each field.</div>${d.conflict.items.map((i,n)=>`<table><tr><th colspan="3">${esc(i.field)}</th></tr><tr><td class="mute">When you started</td><td>${esc(i.base)}</td></tr><tr><td class="mute">Server now (by ${esc(i.by)})</td><td>${esc(i.server)}</td></tr><tr><td class="mute">Your change</td><td>${esc(i.mine)}</td></tr></table><div class="ch row"><button class="${i.choice==='theirs'?'on':''}" data-a="choose" data-d="${d.name}" data-i="${n}" data-v="theirs">Keep server's</button><button class="${i.choice==='mine'?'on':''}" data-a="choose" data-d="${d.name}" data-i="${n}" data-v="mine">Keep mine</button></div>`).join('')}<button class="p" data-a="apply" data-d="${d.name}" ${d.conflict.items.some(i=>!i.choice)?'disabled':''}>Apply my choices</button></div>`;
+ return h}
+function render(){$('#laptop').innerHTML=devCard(S.devs.laptop);$('#phone').innerHTML=devCard(S.devs.phone);
+ const s=S.server,d=s&&s.data;$('#srv').innerHTML=`<h2>🗄️ Server (the single source of truth)</h2>`+(s?`<pre>version ${s.version}   title: ${esc(d.title)}   status: ${d.status}   tags: [${d.tags.map(esc).join(', ')}]   views: ${d.views}${d.deleted?'   (deleted)':''}</pre>`:'<span class="mute">No record yet.</span>');
+ $('#log').innerHTML=S.log.map(e=>`<li><span class="badge b-${e.outcome}">${e.outcome==='INFO'?'INFO':e.outcome}</span><b>${esc(e.dev)}</b> ${esc(e.text)}${e.reason?` <span class="tag">${e.reason}</span>`:''}${e.replayed?' <span class="tag">replayed, not applied twice</span>':''}${e.status?` <span class="mute">HTTP ${e.status}</span>`:''}</li>`).join('')||'<li class="mute">Nothing yet.</li>';
+ $('#hist').innerHTML=S.hist.slice().reverse().map(c=>`<li><b>v${c.version}</b> ${esc(c.device_id)} ${c.op}${c.op==='create'?'':': '+esc(fmt(Object.fromEntries(Object.entries(c.fields).map(([f,v])=>[f,f==='tags'?{add:v}:f==='views'?{increment:v}:{set:v}]))))} ${S.server&&c.version<S.server.version?`<button data-a="restore" data-v="${c.version}">Restore</button>`:''}</li>`).join('')||'<li class="mute">Nothing yet.</li>';
+ const p=S.devs.phone,l=S.devs.laptop;$('#hint').innerHTML=!S.rid?'<b>Start:</b> press <b>New record</b>. The laptop creates a record on the server.':!has(p)?'<b>Step 2:</b> press <b>Pull</b> on the Phone so it gets a copy of the record.':'<b>Try this:</b> switch both devices to <b>Offline</b> and change the <b>Status</b> to different values on each. Switch them back to <b>Online</b> and press <b>Sync</b> on both. The second one gets a conflict to resolve. Editing different fields instead merges cleanly.'}
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]');if(!b||b.disabled||b.tagName==='SELECT'||b.type==='checkbox')return;const a=b.dataset.a,d=S.devs[b.dataset.d],v=b.dataset.v;
+ if(a==='new')return newRecord();if(a==='restore')return restoreTo(+v);
+ if(a==='sync')sync(d);else if(a==='pull')pull(d);else if(a==='resend')resend(d);else if(a==='inc')addOp(d,{views:{increment:1}});else if(a==='rmtag')addOp(d,{tags:{remove:[v]}});
+ else if(a==='addtag'){const t=$('#tag-'+d.name).value.trim().toLowerCase();if(t)addOp(d,{tags:{add:[t]}})}
+ else if(a==='savetitle'){const t=$('#title-'+d.name).value.trim();if(t&&t!==local(d).title)addOp(d,{title:{set:t}})}
+ else if(a==='choose'){d.conflict.items[+b.dataset.i].choice=v;render()}else if(a==='apply')resolve(d)});
+document.addEventListener('change',e=>{const t=e.target,d=S.devs[t.dataset.d];if(!d)return;if(t.dataset.a==='toggle'){d.online=t.checked;render()}else if(t.dataset.a==='status'&&t.value!==local(d).status)addOp(d,{status:{set:t.value}})});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.dataset.enter!==undefined)e.target.parentElement.querySelector('button').click()});
+render();
+</script></body></html>
