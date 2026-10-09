@@ -12,6 +12,7 @@ from typing import Annotated, Any
 from fastapi import Body, Depends, FastAPI, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .db import connect, init_db
 from .docs import (
@@ -24,7 +25,7 @@ from .docs import (
     TAGS_METADATA,
 )
 from .engine import apply_change, get_history, pull_changes, restore_version, state_at
-from .merge import SQLITE_INT_MAX
+from .merge import MAX_REQUEST_BYTES, SQLITE_INT_MAX
 from .schemas import BatchRequest, RestoreRequest, SyncRequest, UUIDStr
 
 logging.basicConfig(
@@ -48,6 +49,67 @@ app = FastAPI(
     openapi_tags=TAGS_METADATA,
     lifespan=lifespan,
 )
+
+
+class BodySizeLimit:
+    """Reject POST bodies over MAX_REQUEST_BYTES with a 413 before the app parses them.
+
+    Content-Length is only a fast path: the bytes actually received are always counted, so a
+    missing or wrong header cannot bypass the limit. Accepted bodies are buffered and replayed.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] != "POST":
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope["headers"]).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > MAX_REQUEST_BYTES:
+            await self._reject(scope, receive, send)
+            return
+
+        chunks, size = [], 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":  # client disconnected
+                return
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > MAX_REQUEST_BYTES:
+                await self._reject(scope, receive, send)
+                return
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+
+        replayed = False
+
+        async def replay() -> Message:
+            nonlocal replayed
+            if replayed:
+                return await receive()
+            replayed = True
+            return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
+
+        await self.app(scope, replay, send)
+
+    @staticmethod
+    async def _reject(scope: Scope, receive: Receive, send: Send) -> None:
+        logger.warning("payload too large on %s %s", scope["method"], scope["path"])
+        response = JSONResponse(
+            status_code=413,
+            content={
+                "outcome": "REJECTED",
+                "reason": "PAYLOAD_TOO_LARGE",
+                "detail": f"request body exceeds {MAX_REQUEST_BYTES} bytes",
+            },
+        )
+        await response(scope, receive, send)
+
+
+app.add_middleware(BodySizeLimit)
 
 
 def get_conn() -> Iterator[sqlite3.Connection]:

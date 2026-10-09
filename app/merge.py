@@ -26,10 +26,13 @@ MAX_TITLE = 200
 MAX_BODY = 10_000
 MAX_TAGS = 20
 MAX_TAG_LEN = 32
+MAX_TAG_OPS = 50  # items per tags.add / tags.remove list
 MAX_INCREMENT = 1_000_000
 # SQLite INTEGER range (signed 64-bit); larger values raise OverflowError on bind.
 SQLITE_INT_MAX = 2**63 - 1
 SQLITE_INT_MIN = -(2**63)
+# Largest POST body accepted; bigger requests are a 413 before any parsing.
+MAX_REQUEST_BYTES = 256 * 1024
 
 
 def new_defaults() -> dict[str, Any]:
@@ -65,6 +68,8 @@ def _validate_set(field: str, spec: dict) -> str | None:
         items = spec.get(key, [])
         if not isinstance(items, list) or not all(isinstance(i, str) for i in items):
             return f"'{field}.{key}' must be a list of strings"
+        if len(items) > MAX_TAG_OPS:
+            return f"'{field}.{key}' has {len(items)} items; at most {MAX_TAG_OPS} per request"
         if any(not i or len(i) > MAX_TAG_LEN for i in items):
             return f"'{field}' items must be 1-{MAX_TAG_LEN} characters"
         lists[key] = set(items)
