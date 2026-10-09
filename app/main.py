@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Body, Depends, FastAPI, Path, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -25,7 +25,7 @@ from .docs import (
 )
 from .engine import apply_change, get_history, pull_changes, restore_version, state_at
 from .merge import SQLITE_INT_MAX
-from .schemas import BatchRequest, RestoreRequest, SyncRequest
+from .schemas import BatchRequest, RestoreRequest, SyncRequest, UUIDStr
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -134,9 +134,10 @@ def health() -> dict[str, str]:
 
 @app.post("/records/{record_id}/sync", tags=["Sync"], summary="Apply one change", responses=SYNC_RESPONSES)
 def sync_one(
-    record_id: str = Path(
-        description="UUID of the record. Must match `record_id` in the body.", examples=[RID]
-    ),
+    record_id: Annotated[
+        UUIDStr,
+        Path(description="UUID of the record. Must match `record_id` in the body.", examples=[RID]),
+    ],
     req: SyncRequest = Body(openapi_examples=SYNC_EXAMPLES),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> JSONResponse:
@@ -189,7 +190,7 @@ def pull(
 
 
 @app.get("/records/{record_id}", tags=["Records"], summary="Current state of a record")
-def get_record(record_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
+def get_record(record_id: Annotated[UUIDStr, Path()], conn: sqlite3.Connection = Depends(get_conn)) -> Any:
     row = conn.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
     if row is None:
         return JSONResponse(status_code=404, content={"reason": "UNKNOWN_RECORD", "record_id": record_id})
@@ -211,7 +212,7 @@ def list_records(
 
 
 @app.get("/records/{record_id}/history", tags=["History"], summary="Change history of a record")
-def history(record_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
+def history(record_id: Annotated[UUIDStr, Path()], conn: sqlite3.Connection = Depends(get_conn)) -> Any:
     changes = get_history(conn, record_id)
     if changes is None:
         return JSONResponse(status_code=404, content={"reason": "UNKNOWN_RECORD", "record_id": record_id})
@@ -222,7 +223,7 @@ def history(record_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> Any
     "/records/{record_id}/versions/{version}", tags=["History"], summary="Record state at a past version"
 )
 def version_view(
-    record_id: str,
+    record_id: Annotated[UUIDStr, Path()],
     version: int = Path(le=SQLITE_INT_MAX),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> Any:
@@ -242,7 +243,7 @@ def version_view(
     summary="Restore an earlier version as a new version",
 )
 def restore(
-    record_id: str = Path(examples=[RID]),
+    record_id: Annotated[UUIDStr, Path(examples=[RID])],
     version: int = Path(
         le=SQLITE_INT_MAX, description="The earlier version whose content to restore.", examples=[6]
     ),

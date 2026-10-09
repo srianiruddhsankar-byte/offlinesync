@@ -1,11 +1,23 @@
 """Pydantic models for request envelopes."""
 
 import uuid
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
 from .merge import SQLITE_INT_MAX
+
+
+def normalize_uuid(v: str) -> str:
+    """Canonical lowercase, hyphenated form, so every spelling of a UUID names the same record."""
+    try:
+        return str(uuid.UUID(v))
+    except ValueError:
+        raise ValueError("must be a valid UUID") from None
+
+
+# A UUID path parameter, normalized like the body's record_id. Invalid values are a 422.
+UUIDStr = Annotated[str, AfterValidator(normalize_uuid)]
 
 
 class SyncRequest(BaseModel):
@@ -27,10 +39,7 @@ class SyncRequest(BaseModel):
     @field_validator("request_id", "record_id")
     @classmethod
     def _uuid(cls, v: str) -> str:
-        try:
-            return str(uuid.UUID(v))
-        except ValueError:
-            raise ValueError("must be a valid UUID") from None
+        return normalize_uuid(v)
 
     @model_validator(mode="after")
     def _base_rules(self) -> Self:
@@ -55,7 +64,4 @@ class RestoreRequest(BaseModel):
     @field_validator("request_id")
     @classmethod
     def _uuid(cls, v: str) -> str:
-        try:
-            return str(uuid.UUID(v))
-        except ValueError:
-            raise ValueError("must be a valid UUID") from None
+        return normalize_uuid(v)
