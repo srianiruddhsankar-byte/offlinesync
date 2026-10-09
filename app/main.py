@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .db import connect, init_db
+from .db import connect, init_db, purge_expired_requests
 from .docs import (
     APP_DESCRIPTION,
     BATCH_EXAMPLES,
@@ -39,6 +39,8 @@ DEMO_PAGE = FilePath(__file__).parent / "static" / "demo.html"
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
+    removed = purge_expired_requests()
+    logger.info("removed %d expired idempotency records", removed)
     yield
 
 

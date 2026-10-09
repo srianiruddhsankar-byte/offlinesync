@@ -4,6 +4,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS records (
@@ -48,8 +49,23 @@ CREATE TABLE IF NOT EXISTS devices (
 """
 
 
+DEFAULT_REQUEST_RETENTION_DAYS = 30
+
+
 def db_path() -> str:
     return os.environ.get("DB_PATH", "sync.db")
+
+
+def request_retention_days() -> int:
+    """REQUEST_RETENTION_DAYS from the environment (default 30). Must be a positive integer."""
+    raw = os.environ.get("REQUEST_RETENTION_DAYS", str(DEFAULT_REQUEST_RETENTION_DAYS))
+    try:
+        days = int(raw)
+    except ValueError:
+        days = 0
+    if days < 1:
+        raise ValueError(f"REQUEST_RETENTION_DAYS must be a positive integer, got {raw!r}")
+    return days
 
 
 def connect() -> sqlite3.Connection:
@@ -65,6 +81,32 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+    finally:
+        conn.close()
+
+
+def purge_expired_requests(retention_days: int | None = None, now: datetime | None = None) -> int:
+    """Delete idempotency rows older than the retention period; return how many were deleted.
+
+    Only the `requests` table is touched. records, change_log and devices are never changed, so
+    history, pull cursors and per-device sequence numbers are unaffected.
+
+    A retry whose row has expired is NOT replayed: it is processed as a brand-new request. That is
+    safe because the rest of the state still guards it:
+    - a change that advanced the device's sequence now carries a stale sequence number, so it is
+      rejected with 409 STALE_SEQUENCE and nothing is applied twice (counters included);
+    - a stored conflict, which did not advance the sequence, is re-evaluated against the current
+      record exactly as a new request would be;
+    - a restore that wrote a version now has a stale base_version, so it gets 409 STALE_BASE;
+    - reusing the request_id with a different payload is no longer reported as REQUEST_ID_REUSED.
+    Retention must therefore exceed the longest time a device may keep retrying the same request.
+    """
+    days = request_retention_days() if retention_days is None else retention_days
+    # created_at is datetime.now(UTC).isoformat(); a UTC cutoff in the same format compares as text.
+    cutoff = ((now or datetime.now(UTC)).astimezone(UTC) - timedelta(days=days)).isoformat()
+    conn = connect()
+    try:
+        return conn.execute("DELETE FROM requests WHERE created_at < ?", (cutoff,)).rowcount
     finally:
         conn.close()
 

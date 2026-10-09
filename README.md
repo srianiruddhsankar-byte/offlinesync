@@ -635,6 +635,7 @@ docker run -p 8000:8000 -v sync-data:/data sync-api   # data persists in the syn
 - Text fields are scalars: two edits to the same field conflict, even if they touch different sentences. There is no in-field text merge.
 - A device never conflicts with its own earlier edits. So if a device resolves a conflict by choosing "mine" and has more queued edits to that field, those later edits apply over the value the user already chose to overwrite. This follows from treating a device's queue as one ordered stream.
 - The record schema is fixed (`title`, `body`, `status`, `tags`, `views`).
+- Idempotency is time-limited. Stored answers in `requests` older than `REQUEST_RETENTION_DAYS` (default 30) are deleted at startup; records, history and device sequences are never touched. A retry after that is handled as a new request, not replayed. It cannot apply twice: an already-applied change now has a stale sequence number (409 `STALE_SEQUENCE`), and an applied restore has a stale `base_version` (409 `STALE_BASE`). Set the retention longer than any device may keep retrying.
 - Free hosting tiers reset the SQLite file on restart, so a deployed demo may lose its data when the instance restarts. Attach a persistent disk and set `DB_PATH` for durable data.
 
 ## Project layout
