@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS records (
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS records_by_created ON records (created_at, id);
 
 CREATE TABLE IF NOT EXISTS change_log (
     change_id    INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -450,11 +450,53 @@ def _change_row(r: sqlite3.Row) -> Json:
     }
 
 
-def get_history(conn: sqlite3.Connection, record_id: str) -> list[Json] | None:
+def get_history(conn: sqlite3.Connection, record_id: str, after: int, limit: int) -> Json | None:
+    """One page of a record's history: versions greater than `after`, oldest first. None if unknown."""
     if conn.execute("SELECT 1 FROM records WHERE id = ?", (record_id,)).fetchone() is None:
         return None
-    rows = conn.execute("SELECT * FROM change_log WHERE record_id = ? ORDER BY version", (record_id,))
-    return [_change_row(r) for r in rows]
+    rows = conn.execute(
+        "SELECT * FROM change_log WHERE record_id = ? AND version > ? ORDER BY version LIMIT ?",
+        (record_id, after, limit + 1),
+    ).fetchall()
+    changes = [_change_row(r) for r in rows[:limit]]
+    return {
+        "record_id": record_id,
+        "history": changes,
+        "next_cursor": changes[-1]["version"] if changes else after,
+        "has_more": len(rows) > limit,
+    }
+
+
+def records_page(
+    conn: sqlite3.Connection, include_deleted: bool, after: str | None, limit: int
+) -> Json | None:
+    """One page of records ordered by (created_at, id); `after` is the id of the last record seen.
+
+    None if `after` names no record. Deleted records stay in the table, so any id ever returned
+    remains a valid cursor even if that record has since been deleted.
+    """
+    sql = "SELECT * FROM records"
+    where: list[str] = []
+    params: list[Any] = []
+    if after is not None:
+        cursor = conn.execute("SELECT created_at FROM records WHERE id = ?", (after,)).fetchone()
+        if cursor is None:
+            return None
+        where.append("(created_at, id) > (?, ?)")
+        params += [cursor["created_at"], after]
+    if not include_deleted:
+        where.append("json_extract(data, '$.deleted') = 0")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at, id LIMIT ?"
+    params.append(limit + 1)
+    rows = conn.execute(sql, params).fetchall()
+    records = [{"id": r["id"], "version": r["version"], "data": json.loads(r["data"])} for r in rows[:limit]]
+    return {
+        "records": records,
+        "next_cursor": records[-1]["id"] if records else after,
+        "has_more": len(rows) > limit,
+    }
 
 
 def pull_changes(conn: sqlite3.Connection, since: int, limit: int, exclude_device: str | None) -> Json:

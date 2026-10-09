@@ -33,6 +33,9 @@ SQLITE_INT_MAX = 2**63 - 1
 SQLITE_INT_MIN = -(2**63)
 # Largest POST body accepted; bigger requests are a 413 before any parsing.
 MAX_REQUEST_BYTES = 256 * 1024
+# Page size for list endpoints (records, history, pull).
+DEFAULT_PAGE = 100
+MAX_PAGE = 500
 
 
 def new_defaults() -> dict[str, Any]:

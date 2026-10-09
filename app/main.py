@@ -24,8 +24,8 @@ from .docs import (
     SYNC_RESPONSES,
     TAGS_METADATA,
 )
-from .engine import apply_change, get_history, pull_changes, restore_version, state_at
-from .merge import MAX_REQUEST_BYTES, SQLITE_INT_MAX
+from .engine import apply_change, get_history, pull_changes, records_page, restore_version, state_at
+from .merge import DEFAULT_PAGE, MAX_PAGE, MAX_REQUEST_BYTES, SQLITE_INT_MAX
 from .schemas import BatchRequest, RestoreRequest, SyncRequest, UUIDStr
 
 logging.basicConfig(
@@ -244,7 +244,7 @@ def pull(
     since: int = Query(
         0, ge=0, le=SQLITE_INT_MAX, description="Return changes with change_id greater than this."
     ),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
     exclude_device: str | None = Query(None, description="Skip changes made by this device."),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict[str, Any]:
@@ -261,24 +261,39 @@ def get_record(record_id: Annotated[UUIDStr, Path()], conn: sqlite3.Connection =
 
 @app.get("/records", tags=["Records"], summary="List records")
 def list_records(
-    include_deleted: bool = False, conn: sqlite3.Connection = Depends(get_conn)
-) -> dict[str, Any]:
-    rows = conn.execute("SELECT * FROM records ORDER BY created_at").fetchall()
-    out = []
-    for r in rows:
-        data = json.loads(r["data"])
-        if data["deleted"] and not include_deleted:
-            continue
-        out.append({"id": r["id"], "version": r["version"], "data": data})
-    return {"records": out}
+    include_deleted: bool = False,
+    after: Annotated[
+        UUIDStr | None, Query(description="`next_cursor` from the previous page (a record id).")
+    ] = None,
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> Any:
+    """Records in creation order (created_at, then id). Follow `next_cursor` while `has_more`."""
+    page = records_page(conn, include_deleted, after, limit)
+    if page is None:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "outcome": "REJECTED",
+                "reason": "VALIDATION_ERROR",
+                "errors": [{"loc": ["query", "after"], "msg": "cursor does not name a record"}],
+            },
+        )
+    return page
 
 
 @app.get("/records/{record_id}/history", tags=["History"], summary="Change history of a record")
-def history(record_id: Annotated[UUIDStr, Path()], conn: sqlite3.Connection = Depends(get_conn)) -> Any:
-    changes = get_history(conn, record_id)
-    if changes is None:
+def history(
+    record_id: Annotated[UUIDStr, Path()],
+    after: int = Query(0, ge=0, le=SQLITE_INT_MAX, description="Return versions greater than this."),
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> Any:
+    """Versions oldest first. Follow `next_cursor` while `has_more`."""
+    page = get_history(conn, record_id, after, limit)
+    if page is None:
         return JSONResponse(status_code=404, content={"reason": "UNKNOWN_RECORD", "record_id": record_id})
-    return {"record_id": record_id, "history": changes}
+    return page
 
 
 @app.get(
