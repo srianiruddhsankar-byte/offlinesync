@@ -1,5 +1,6 @@
 """FastAPI routes. All sync logic lives in engine.py; this file maps it to HTTP."""
 
+import hmac
 import json
 import logging
 import os
@@ -9,9 +10,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
 from typing import Annotated, Any
 
-from fastapi import Body, Depends, FastAPI, Path, Query, Request
+from fastapi import Body, Depends, FastAPI, Path, Query, Request, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.security import APIKeyHeader
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .db import connect, init_db, purge_expired_requests
@@ -114,6 +116,39 @@ class BodySizeLimit:
 app.add_middleware(BodySizeLimit)
 
 
+class Unauthorized(Exception):
+    """Raised by require_api_key; turned into a 401 by the handler below."""
+
+
+api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    auto_error=False,
+    description="Required on POST routes only when the server sets SYNC_API_KEY.",
+)
+
+
+def api_key_ok(key: str | None) -> bool:
+    """Optional shared-key check for writes. Unset or empty SYNC_API_KEY means writes stay open.
+
+    Read per request, so the key can be set without code changes. This is one key for all
+    clients, not per-device identity: it keeps strangers out but does not stop one keyholder
+    from writing as another device_id.
+    """
+    expected = os.environ.get("SYNC_API_KEY")
+    if not expected:
+        return True
+    # Starlette decodes header bytes as latin-1; encoding back recovers the raw bytes sent.
+    return key is not None and hmac.compare_digest(key.encode("latin-1"), expected.encode())
+
+
+def require_api_key(key: str | None = Security(api_key_header)) -> None:
+    if not api_key_ok(key):
+        raise Unauthorized
+
+
+WRITE_GUARD = [Depends(require_api_key)]
+
+
 def get_conn() -> Iterator[sqlite3.Connection]:
     conn = connect()
     try:
@@ -146,10 +181,22 @@ def _log_result(device: str, status: int, body: dict[str, Any]) -> None:
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # A body that is not JSON fails before route dependencies run; still answer 401 first.
+    if request.method == "POST" and not api_key_ok(request.headers.get("X-API-Key")):
+        return await unauthorized_handler(request, Unauthorized())
     errors = [{"loc": [str(p) for p in e["loc"]], "msg": e["msg"]} for e in exc.errors()]
     return JSONResponse(
         status_code=422,
         content={"outcome": "REJECTED", "reason": "VALIDATION_ERROR", "errors": errors},
+    )
+
+
+@app.exception_handler(Unauthorized)
+async def unauthorized_handler(request: Request, exc: Unauthorized) -> JSONResponse:
+    logger.warning("rejected %s %s: missing or wrong X-API-Key", request.method, request.url.path)
+    return JSONResponse(
+        status_code=401,
+        content={"outcome": "REJECTED", "reason": "UNAUTHORIZED", "detail": "missing or wrong X-API-Key"},
     )
 
 
@@ -196,7 +243,13 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/records/{record_id}/sync", tags=["Sync"], summary="Apply one change", responses=SYNC_RESPONSES)
+@app.post(
+    "/records/{record_id}/sync",
+    tags=["Sync"],
+    summary="Apply one change",
+    responses=SYNC_RESPONSES,
+    dependencies=WRITE_GUARD,
+)
 def sync_one(
     record_id: Annotated[
         UUIDStr,
@@ -226,7 +279,7 @@ def sync_one(
     return _respond(status, body)
 
 
-@app.post("/sync", tags=["Sync"], summary="Apply a batch of changes, in order")
+@app.post("/sync", tags=["Sync"], summary="Apply a batch of changes, in order", dependencies=WRITE_GUARD)
 def sync_batch(
     batch: BatchRequest = Body(openapi_examples=BATCH_EXAMPLES),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -320,6 +373,7 @@ def version_view(
     "/records/{record_id}/restore/{version}",
     tags=["History"],
     summary="Restore an earlier version as a new version",
+    dependencies=WRITE_GUARD,
 )
 def restore(
     record_id: Annotated[UUIDStr, Path(examples=[RID])],

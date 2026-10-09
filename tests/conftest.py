@@ -7,6 +7,12 @@ from app.db import init_db
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def no_api_key(monkeypatch):
+    """Writes are open unless a test sets SYNC_API_KEY itself."""
+    monkeypatch.delenv("SYNC_API_KEY", raising=False)
+
+
 @pytest.fixture
 def db_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))

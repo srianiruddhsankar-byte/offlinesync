@@ -9,12 +9,14 @@ import tempfile
 import uuid
 
 BASE_URL = os.environ.get("BASE_URL")
+API_KEY = os.environ.get("SYNC_API_KEY")
+HEADERS = {"X-API-Key": API_KEY} if API_KEY else {}
 os.environ.setdefault("LOG_LEVEL", "WARNING")  # keep the walkthrough output clean
 
 if BASE_URL:
     import httpx
 
-    client = httpx.Client(base_url=BASE_URL, timeout=10)
+    client = httpx.Client(base_url=BASE_URL, timeout=10, headers=HEADERS)
 else:
     os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "demo.db")
     from fastapi.testclient import TestClient
@@ -23,7 +25,7 @@ else:
     from app.main import app
 
     init_db()
-    client = TestClient(app)
+    client = TestClient(app, headers=HEADERS)
 
 RID = str(uuid.uuid4())
 seq = {}

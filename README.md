@@ -5,7 +5,7 @@ A backend that synchronizes changes from multiple devices and **detects conflict
 Several devices can edit the same record while offline and sync later. Every change says which version of the record it was based on, so the server can tell exactly what each device had seen. Changes that don't collide are merged, changes that do are refused with enough information for the client to resolve them, and retries, duplicates, out-of-order delivery and concurrent requests can't corrupt the data.
 
 - **Stack:** Python 3.11, FastAPI, SQLite (WAL), pytest
-- **Live demo:** _add the deployed URL here_
+- **Live demo:** _add the deployed URL here_ (runs without `SYNC_API_KEY`, so anyone can write to it)
 - **Design spec:** [design.md](design.md)
 
 ## Contents
@@ -67,7 +67,7 @@ Open **http://localhost:8000/demo** for a visual demo: two devices (Laptop and P
 
 | Concept | Purpose |
 |---|---|
-| `device_id` | Which device made the change. Self-declared, no authentication. |
+| `device_id` | Which device made the change. Self-declared: an optional shared API key can restrict who writes, but nothing ties a key to a device. |
 | `base_version` | The record version the device last saw when it made the edit. This is how the server knows what the device was looking at. |
 | `version` | Server-assigned, +1 for every applied change to a record. |
 | `sequence` | Per-device operation counter (1, 2, 3, ...). `base_version` says what a device *saw*; `sequence` says the *order of the device's own operations*. |
@@ -149,9 +149,24 @@ More cases that are **not** conflicts: both devices add different tags (union), 
 | `POST /records/{id}/restore/{v}` | Restore version `v` as a new version. |
 | `GET /health` | Liveness. |
 
-**Status codes:** `200` applied or replayed, `201` created, `404` unknown record or version, `409` conflict / out-of-order / stale sequence / stale restore, `422` validation error / future `base_version` / `request_id` reused with a different payload.
+**Status codes:** `200` applied or replayed, `201` created, `401` missing or wrong API key (only when `SYNC_API_KEY` is set), `404` unknown record or version, `409` conflict / out-of-order / stale sequence / stale restore, `413` request body over 256 KB, `422` validation error / future `base_version` / `request_id` reused with a different payload.
 
-**Rejection reasons:** `VALIDATION_ERROR`, `UNKNOWN_RECORD`, `UNKNOWN_VERSION`, `FUTURE_BASE_VERSION`, `OUT_OF_ORDER` (includes `expected_sequence`), `STALE_SEQUENCE`, `REQUEST_ID_REUSED`. **Conflict reasons:** `FIELD_CONFLICT`, `RECORD_DELETED`, `EDITED_SINCE_BASE`, `ALREADY_EXISTS`, `STALE_BASE`.
+**Rejection reasons:** `UNAUTHORIZED`, `PAYLOAD_TOO_LARGE`, `VALIDATION_ERROR`, `UNKNOWN_RECORD`, `UNKNOWN_VERSION`, `FUTURE_BASE_VERSION`, `OUT_OF_ORDER` (includes `expected_sequence`), `STALE_SEQUENCE`, `REQUEST_ID_REUSED`. **Conflict reasons:** `FIELD_CONFLICT`, `RECORD_DELETED`, `EDITED_SINCE_BASE`, `ALREADY_EXISTS`, `STALE_BASE`.
+
+### Authentication (optional)
+
+Set `SYNC_API_KEY` to require a shared key on every write (`POST /records/{id}/sync`, `POST /sync`, `POST /records/{id}/restore/{v}`):
+
+```bash
+SYNC_API_KEY=change-me uvicorn app.main:app
+curl -X POST localhost:8000/sync -H 'X-API-Key: change-me' -H 'Content-Type: application/json' -d '{"changes": [...]}'
+```
+
+A missing or wrong `X-API-Key` gets `401` with `{"outcome": "REJECTED", "reason": "UNAUTHORIZED"}` and nothing is written; the key is checked before the body is validated, so an unauthenticated caller learns nothing about its payload. The comparison is constant-time (`hmac.compare_digest`). Reads stay open. In Swagger, click **Authorize** to send the key. `demo.py` sends `SYNC_API_KEY` from its environment if set.
+
+When `SYNC_API_KEY` is unset (or empty), writes need no key, which is how the tests, `demo.py`, the `/demo` page and the public demo deployment run. The `/demo` page does not send a key, so it can only write to a server without one.
+
+This is one key shared by all clients. It keeps strangers out, but any keyholder can still write as any `device_id`. The production answer is per-device tokens: issue each device its own credential and have the server derive `device_id` from it instead of trusting the request body.
 
 The examples below are real output from this code, using the same requests as the Swagger examples (record `11111111-1111-1111-1111-111111111111`).
 
@@ -630,7 +645,7 @@ docker run -p 8000:8000 -v sync-data:/data sync-api   # data persists in the syn
 
 ## Assumptions and known limits
 
-- `device_id` is self-declared. There is no authentication, by design: the brief doesn't ask for it.
+- `device_id` is self-declared. The optional shared `SYNC_API_KEY` limits who can write, not which device they claim to be; per-device tokens would be the production answer (see [Authentication](#authentication-optional)).
 - One SQLite writer. Fine for this scope; a production system would use Postgres with row-level locks.
 - Text fields are scalars: two edits to the same field conflict, even if they touch different sentences. There is no in-field text merge.
 - A device never conflicts with its own earlier edits. So if a device resolves a conflict by choosing "mine" and has more queued edits to that field, those later edits apply over the value the user already chose to overwrite. This follows from treating a device's queue as one ordered stream.

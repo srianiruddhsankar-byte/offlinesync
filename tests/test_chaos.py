@@ -437,6 +437,7 @@ def test_chaos_concurrent_devices(db_env):
 
 
 if __name__ == "__main__":
+    os.environ.pop("SYNC_API_KEY", None)  # the chaos run exercises sync logic, not auth
     total, seeds = 0, range(1, 6)
     steps = int(os.environ.get("CHAOS_STEPS", "4000"))
     for s in seeds:

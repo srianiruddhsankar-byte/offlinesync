@@ -341,13 +341,18 @@ Synchronizes changes from multiple devices and **detects conflicts instead of si
 
 To start over, stop the server, delete `sync.db`, and start it again.
 
+### Authentication (optional)
+If the server sets `SYNC_API_KEY`, every POST route needs the header `X-API-Key` with that value;
+otherwise it answers **401** `UNAUTHORIZED` and writes nothing. Click **Authorize** above to send it.
+Reads stay open. When `SYNC_API_KEY` is unset, as on the public demo, no key is needed.
+
 ### Outcomes
 | Outcome | Meaning | HTTP |
 |---|---|---|
 | `ACCEPTED` | Applied cleanly | 200 / 201 |
 | `MERGED` | Applied on top of newer changes to other fields | 200 |
 | `CONFLICT` | Nothing written; the client must resolve | 409 |
-| `REJECTED` | Invalid, unknown or out-of-order | 404 / 409 / 422 |
+| `REJECTED` | Invalid, unknown, out-of-order or unauthorized | 401 / 404 / 409 / 422 |
 """
 
 TAGS_METADATA = [
