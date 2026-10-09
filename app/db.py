@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS devices (
 """
 
 
+# Ordered upgrades. MIGRATIONS[0] takes version 1 (SCHEMA above) to 2, MIGRATIONS[1] takes 2 to 3,
+# and so on; the code's schema version is 1 + len(MIGRATIONS). Append only, never edit or reorder.
+# Statements are split on ";", so keep semicolons out of string literals.
+MIGRATIONS: list[str] = []
+
 DEFAULT_REQUEST_RETENTION_DAYS = 30
 
 
@@ -77,10 +82,44 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+class SchemaTooNewError(RuntimeError):
+    """The database was written by a newer version of the code than this one."""
+
+
+def _run_script(conn: sqlite3.Connection, sql: str) -> None:
+    # executescript() would COMMIT the open transaction, so run statements one by one.
+    for statement in sql.split(";"):
+        if statement.strip():
+            conn.execute(statement)
+
+
 def init_db() -> None:
+    """Create a fresh database at the latest version, or migrate an existing one forward.
+
+    A database created before versioning existed has the version 1 tables and no version row,
+    so it is treated as version 1. A database newer than this code is refused untouched.
+    """
+    latest = 1 + len(MIGRATIONS)
     conn = connect()
     try:
-        conn.executescript(SCHEMA)
+        with transaction(conn):
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_version "
+                "(id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)"
+            )
+            row = conn.execute("SELECT version FROM schema_version").fetchone()
+            current = row["version"] if row else 1
+            if current > latest:
+                raise SchemaTooNewError(
+                    f"database schema version {current} is newer than this code supports ({latest}); "
+                    f"upgrade the app or point DB_PATH at another database"
+                )
+            if row is None:
+                _run_script(conn, SCHEMA)
+                conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 1)")
+            for version in range(current, latest):
+                _run_script(conn, MIGRATIONS[version - 1])
+                conn.execute("UPDATE schema_version SET version = ?", (version + 1,))
     finally:
         conn.close()
 
