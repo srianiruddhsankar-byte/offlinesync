@@ -30,7 +30,7 @@ python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 
-pytest                             # 49 tests
+pytest                             # 179 tests
 ruff check . && mypy               # lint and type check
 python demo.py                     # a narrated walkthrough, no server needed
 python -m tests.test_chaos         # the large randomized stress run
@@ -592,7 +592,8 @@ HTTP 200
 ## Testing
 
 ```bash
-pytest                         # 49 tests, a few seconds
+pytest                         # 179 tests, a few seconds
+pytest --cov                   # same, with line and branch coverage of app/
 pytest tests/test_chaos.py -s  # chaos test with a per-seed summary
 python -m tests.test_chaos     # big run, prints the headline result
 ```
@@ -612,6 +613,8 @@ python -m tests.test_chaos     # big run, prints the headline result
   8. after a full sync, every device's copy equals the server.
 
 Latest large run (`python -m tests.test_chaos`): **more than 15,000 randomized operations across 5 seeds plus a 4-thread concurrent run, 0 invariant violations.** The seeded runs are reproducible; the exact total varies a little because the threaded run depends on timing.
+
+**Coverage:** 99.87% of `app/` (591 statements, 168 branches), measured with branch coverage by `pytest --cov` (configured in `pyproject.toml`); CI runs it on every push. The only uncovered line is the one-line redirect from `/` to `/demo`.
 
 To confirm the chaos test can actually fail, the engine was deliberately broken (conflict detection switched off, then counters changed from adding to overwriting) and the test caught both.
 

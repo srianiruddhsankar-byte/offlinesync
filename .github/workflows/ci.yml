@@ -22,4 +22,4 @@ jobs:
       - name: Type check
         run: mypy
       - name: Tests
-        run: pytest -q
+        run: pytest -q --cov --cov-report=term-missing
