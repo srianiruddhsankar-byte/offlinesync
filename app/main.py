@@ -24,6 +24,7 @@ from .docs import (
     TAGS_METADATA,
 )
 from .engine import apply_change, get_history, pull_changes, restore_version, state_at
+from .merge import SQLITE_INT_MAX
 from .schemas import BatchRequest, RestoreRequest, SyncRequest
 
 logging.basicConfig(
@@ -177,7 +178,9 @@ def sync_batch(
 
 @app.get("/sync/changes", tags=["Pull"], summary="Pull changes after a cursor")
 def pull(
-    since: int = Query(0, ge=0, description="Return changes with change_id greater than this."),
+    since: int = Query(
+        0, ge=0, le=SQLITE_INT_MAX, description="Return changes with change_id greater than this."
+    ),
     limit: int = Query(100, ge=1, le=500),
     exclude_device: str | None = Query(None, description="Skip changes made by this device."),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -218,7 +221,11 @@ def history(record_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> Any
 @app.get(
     "/records/{record_id}/versions/{version}", tags=["History"], summary="Record state at a past version"
 )
-def version_view(record_id: str, version: int, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
+def version_view(
+    record_id: str,
+    version: int = Path(le=SQLITE_INT_MAX),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> Any:
     row = conn.execute("SELECT version FROM records WHERE id = ?", (record_id,)).fetchone()
     if row is None:
         return JSONResponse(status_code=404, content={"reason": "UNKNOWN_RECORD", "record_id": record_id})
@@ -236,7 +243,9 @@ def version_view(record_id: str, version: int, conn: sqlite3.Connection = Depend
 )
 def restore(
     record_id: str = Path(examples=[RID]),
-    version: int = Path(description="The earlier version whose content to restore.", examples=[6]),
+    version: int = Path(
+        le=SQLITE_INT_MAX, description="The earlier version whose content to restore.", examples=[6]
+    ),
     req: RestoreRequest = Body(openapi_examples=RESTORE_EXAMPLES),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> JSONResponse:

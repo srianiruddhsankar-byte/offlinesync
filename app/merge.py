@@ -27,6 +27,9 @@ MAX_BODY = 10_000
 MAX_TAGS = 20
 MAX_TAG_LEN = 32
 MAX_INCREMENT = 1_000_000
+# SQLite INTEGER range (signed 64-bit); larger values raise OverflowError on bind.
+SQLITE_INT_MAX = 2**63 - 1
+SQLITE_INT_MIN = -(2**63)
 
 
 def new_defaults() -> dict[str, Any]:
@@ -107,4 +110,7 @@ def apply_field(field: str, current: Any, spec: dict) -> Any:
         if len(result) > MAX_TAGS:
             raise ValueError(f"'{field}' would exceed {MAX_TAGS} items")
         return sorted(result)
-    return current + spec["increment"]
+    result = current + spec["increment"]
+    if not SQLITE_INT_MIN <= result <= SQLITE_INT_MAX:
+        raise ValueError(f"'{field}' would leave the range {SQLITE_INT_MIN}..{SQLITE_INT_MAX}")
+    return result
